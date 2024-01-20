@@ -11,7 +11,9 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+
 #include "config.h"
+#include "QMI8658.h"
 
 #if PICO_ON_DEVICE
 
@@ -39,8 +41,16 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Must be able to represent
 #define FRAC_BITS 25u
 
-// Define the framerate of updates to the LCD (60 fps)
-#define FRAME_INTERVAL  1000000/60
+// Define the framerate of updates to the LCD
+#define FRAME_INTERVAL  1000000/60  // 60 fps
+
+// Define the measurement rate for the accelerometer
+#define ACCEL_INTERVAL  10000       // 10 ms
+// Define the damping factor for accelerometer measurements
+#define ACCEL_DAMPING   0.3
+// Define the number of measurements for the initial value
+#define ACCEL_INITIAL   10
+
 
 #if USE_FLOAT
 //typedef float fixed;
@@ -102,6 +112,9 @@ static fixed dx0_dx, dy0_dy;
 static fixed max;
 static bool params_ready;
 
+static uint8_t use_accel = 0;
+static float accel_meas[3] = {0,0,0};
+static float accel_init[3] = {0,0,0};
 
 static uint16_t framebuffer[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 
@@ -204,10 +217,19 @@ void __time_critical_func(render_loop)() {
     }
 }
 
-int64_t timer_callback(alarm_id_t alarm_id, void *user_data) {
+int64_t render_callback(alarm_id_t alarm_id, void *user_data) {
     // Device-specific frame display code
     output_frame_to_display();
     return FRAME_INTERVAL;
+}
+
+int64_t accelerometer_callback(alarm_id_t alarm_id, void *user_data) {
+    // The accelerometer measurements are noisy, so apply some exponential damping
+    float acc[3] = {0,0,0};
+    QMI8658_read_acc_xyz(acc);
+    for (int i = 0; i < 3; ++i)
+        accel_meas[i] = ACCEL_DAMPING*acc[i] + (1-ACCEL_DAMPING)*accel_meas[i];
+    return ACCEL_INTERVAL;
 }
 
 void core1_func() {
@@ -225,20 +247,40 @@ int vga_main(void) {
 #if PICO_ON_DEVICE
     // Timer callback generates output to the device
     // Display sheering is expected because it is async with the fractal generation
-    add_alarm_in_us(FRAME_INTERVAL, timer_callback, NULL, true);
+    add_alarm_in_us(FRAME_INTERVAL, render_callback, NULL, true);
+
+    if (use_accel)
+    {
+        // Set a callback for reading the accelerometer
+        add_alarm_in_us(ACCEL_INTERVAL, accelerometer_callback, NULL, true);
+    }
 #endif
     render_loop();
     return 0;
 }
 
 void __time_critical_func(frame_update_logic)() {
+    static float offx = 0, offy = 0;
     if (!params_ready) {
         // Slowly zoom in the visualisation on adjacent frames
         float scale = DISPLAY_HEIGHT / 2;
-        static int foo;
-        // Zoom towards the coordinates (-0.10, 0.92)
-        float offx = (MIN(foo, 200)) / 500.0f;
-        float offy = -(MIN(2*foo, 230)) / 250.0f;
+        static int foo = 0;
+        if (use_accel)
+        {
+            offx += (accel_meas[1] - accel_init[1])/200;
+            offy += (accel_meas[2] - accel_init[2])/200;
+            // window bounds
+            if (offx < -1) offx = -1;
+            else if (offx > 1.5) offx = 1.5;
+            if (offy < -1.5) offy = -1.5;
+            else if (offy > 1.5) offy = 1.5;
+        }
+        else
+        {
+            // Zoom towards the coordinates (-0.10, 0.92)
+            offx = (MIN(foo, 200)) / 500.0f;
+            offy = -(MIN(2*foo, 230)) / 250.0f;
+        }
         scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
         x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
         y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
@@ -271,6 +313,14 @@ int main(void) {
     DEV_Module_Init();
     LCD_1IN28_Init(HORIZONTAL);
     LCD_1IN28_InitDMA();
+#ifdef ACCEL_INTERVAL
+    use_accel = QMI8658_init();
+    for (int i = 0; i < ACCEL_INITIAL; ++i)
+        accelerometer_callback(0, NULL);
+    accel_init[0] = accel_meas[0];
+    accel_init[1] = accel_meas[1];
+    accel_init[2] = accel_meas[2];
+#endif
 
     // Re init uart now that clk_peri has changed
     setup_default_uart();
@@ -278,3 +328,4 @@ int main(void) {
 
     return vga_main();
 }
+
