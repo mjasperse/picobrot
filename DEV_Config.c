@@ -186,7 +186,7 @@ uint8_t DEV_Module_Init(void)
     pwm_set_enabled(slice_num, true);
 
     // SPI Config
-    spi_init(SPI_PORT, 40000 * 1000);
+    spi_init(SPI_PORT, 62500 * 1000);
     gpio_set_function(LCD_CLK_PIN, GPIO_FUNC_SPI);
     gpio_set_function(LCD_MOSI_PIN, GPIO_FUNC_SPI);
     // I2C Config
