@@ -235,8 +235,8 @@ void __time_critical_func(frame_update_logic)() {
         static int foo;
         // Zoom towards the coordinates (-0.10, 0.92)
         float offx = (MIN(foo, 200)) / 500.0f;
-        float offy = -(MIN(foo, 230)) / 250.0f;
-        scale *= (10000 + (foo++) * (float) foo) / 10000.0f;
+        float offy = -(MIN(2*foo, 230)) / 250.0f;
+        scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
         x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
         y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
         dx0_dx = float_to_fixed(1.0f / scale);
