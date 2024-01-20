@@ -151,7 +151,11 @@ static void scanline(uint16_t *line_buffer, uint length, fixed mx, fixed my, fix
 void output_frame_to_display()
 {
     // customize this function for the particular attached display
+#if CONFIG_NO_DMA
     LCD_1IN28_Display(framebuffer);
+#else
+    LCD_1IN28_DisplayDMA(framebuffer);
+#endif
 }
 
 
@@ -235,6 +239,7 @@ int main(void) {
     // Initialise the device hardware [Waveshare RP2040-LCD-1.28]
     DEV_Module_Init();
     LCD_1IN28_Init(HORIZONTAL);
+    LCD_1IN28_InitDMA();
 
     // Re init uart now that clk_peri has changed
     setup_default_uart();

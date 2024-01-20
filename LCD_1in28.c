@@ -17,7 +17,10 @@
 #include <stdlib.h>		//itoa()
 #include <stdio.h>
 
+#include "hardware/dma.h"
+
 LCD_1IN28_ATTRIBUTES LCD_1IN28;
+static int dma_channel = 0;
 
 
 /******************************************************************************
@@ -449,3 +452,36 @@ void LCD_1IN28_DisplayPoint(UWORD X, UWORD Y, UWORD Color)
     LCD_1IN28_SendData_16Bit(Color);
 }
 
+
+/******************************************************************************
+function :	Configures the SPI peripheral for DMA mode
+parameter:
+******************************************************************************/
+void LCD_1IN28_InitDMA()
+{
+    dma_channel = dma_claim_unused_channel(true);
+    dma_channel_config channel_config = dma_channel_get_default_config(dma_channel);
+    channel_config_set_transfer_data_size(&channel_config, DMA_SIZE_8);
+    channel_config_set_dreq(&channel_config, DREQ_SPI1_TX);
+    dma_channel_set_config(dma_channel, &channel_config, false);
+    dma_channel_set_write_addr(dma_channel, &spi_get_hw(SPI_PORT)->dr, false);
+
+    // Configure the window for full-screen display - assume this is not changed once set
+    LCD_1IN28_SetWindows(0, 0, LCD_1IN28_WIDTH, LCD_1IN28_HEIGHT);
+}
+
+/******************************************************************************
+function :	Writes the image buffer to the display using DMA
+parameter:	Pointer to the image array, must be correctly sized for the GRAM
+			(LCD_1IN28_HEIGHT*LCD_1IN28_WIDTH*2 bytes)
+******************************************************************************/
+void LCD_1IN28_DisplayDMA(UWORD *Image)
+{
+    // Ensure any previous DMA operation completed
+    dma_channel_wait_for_finish_blocking(dma_channel);
+    // Set the data pin as required
+    DEV_Digital_Write(LCD_DC_PIN, 1);
+    // Start the DMA
+    dma_channel_set_trans_count(dma_channel, LCD_1IN28_HEIGHT*LCD_1IN28_WIDTH*2, false);
+    dma_channel_set_read_addr(dma_channel, Image, true);
+}
