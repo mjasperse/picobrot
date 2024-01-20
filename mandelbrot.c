@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+ * Modifications copyright (c) 2024 by Martijn Jasperse <m.jasperse@gmail.com>
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -21,7 +22,22 @@
 
 CU_REGISTER_DEBUG_PINS(generation)
 
+
+// *** CONFIGURATION OPTIONS ***
+// Maximum number of iterations for the escape calculation
+// Increase for more detail around the set edges at the expense of calculation time
+#define MAX_ITERS 127//255
+
+// Use floating-point arithmetic instead of fixed-point?
+// Runs extremely slowly on the device, helpful for sanity-checking
 //#define USE_FLOAT 1
+
+// Enable overclocking of sysclock for faster calculation and smoother rendering
+#define TURBO_BOOST 1
+
+// Number of fractional bits to use for fixed-point calculations
+// Must be able to represent
+#define FRAC_BITS 25u
 
 #if USE_FLOAT
 //typedef float fixed;
@@ -33,7 +49,6 @@ static inline fixed fixed_mult(fixed a, fixed b) {
     return a*b;
 }
 #else
-#define FRAC_BITS 25u
 typedef int32_t fixed;
 
 static inline fixed float_to_fixed(float x) {
@@ -75,8 +90,6 @@ static inline fixed fixed_mult(fixed a, fixed b) {
 
 #endif
 
-#define max_iters 127//255
-
 struct mutex frame_logic_mutex;
 static void frame_update_logic();
 
@@ -88,7 +101,7 @@ static bool params_ready;
 
 
 static uint16_t framebuffer[DISPLAY_HEIGHT * DISPLAY_WIDTH];
-//static uint16_t *framebuffer;
+
 
 #define PICO_SCANVIDEO_PIXEL_FROM_RGB8  RGB565
 static uint16_t colors[16] = {
@@ -110,7 +123,7 @@ static uint16_t colors[16] = {
         PICO_SCANVIDEO_PIXEL_FROM_RGB8(106, 52, 3),
 };
 
-static void scanline(uint16_t *line_buffer, uint length, fixed mx, fixed my, fixed dmx_dx) {
+static void generate_fractal_line(uint16_t *line_buffer, uint length, fixed mx, fixed my, fixed dmx_dx) {
     for (int x = 0; x < length; ++x) {
         int iters;
         fixed cr = mx;
@@ -120,29 +133,36 @@ static void scanline(uint16_t *line_buffer, uint length, fixed mx, fixed my, fix
         fixed xold = 0;
         fixed yold = 0;
         int period = 0;
-        for (iters = 0; iters < max_iters; ++iters) {
+        // visualise the Mandelbrot set using the escape algorithm
+        // https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Optimized_escape_time_algorithms
+        for (iters = 0; iters < MAX_ITERS; ++iters) {
             fixed zr2 = fixed_mult(zr, zr);
             fixed zi2 = fixed_mult(zi, zi);
             if (zr2 + zi2 > max) {
+                // trajectory diverging to infinity
                 break;
             }
             fixed zrtemp = zr2 - zi2 + cr;
             zi = 2 * fixed_mult(zr, zi) + ci;
             zr = zrtemp;
+            // detect whether the trajectory has converged to a fixed position
             if (zr == xold && zi == yold) {
-                iters = max_iters + 1;
+                iters = MAX_ITERS + 1;
                 break;
             }
             if (++period > 20) {
+                // long trajectories might converge to a value other than the origin
                 period = 0;
                 xold = zr;
                 yold = zi;
             }
         }
-        if (iters == max_iters + 1) {
-            line_buffer[x] = 0;//x1f;
+        if (iters >= MAX_ITERS) {
+            // points within the set are black
+            line_buffer[x] = 0;
         } else {
-            line_buffer[x] = iters == max_iters ? 0 : colors[iters & 15u];
+            // points outside the set are colored based on their escape time
+            line_buffer[x] = colors[iters & 15u];
         }
         mx += dmx_dx;
     }
@@ -161,31 +181,34 @@ void output_frame_to_display()
 
 // "Worker thread" for each core
 void __time_critical_func(render_loop)() {
-    static uint32_t last_frame_num = 0;
     int core_num = get_core_num();
     printf("Rendering on core %d\n", core_num);
     while (true) {
+        // Mutex protects shared state variables
         mutex_enter_blocking(&frame_logic_mutex);
         if (y == DISPLAY_HEIGHT) {
             params_ready = false;
             frame_update_logic();
             y = 0;
         }
+        // Move to the next line
         uint _y = y++;
         fixed _x0 = x0, _y0 = y0;
         fixed _dx0_dx = dx0_dx, _dy0_dy = dy0_dy;
         mutex_exit(&frame_logic_mutex);
-
-        scanline(framebuffer + _y * DISPLAY_WIDTH, DISPLAY_WIDTH, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
+        // Generate this line of the image
+        generate_fractal_line(&framebuffer[_y * DISPLAY_WIDTH], DISPLAY_WIDTH, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
     }
 }
 
 int64_t timer_callback(alarm_id_t alarm_id, void *user_data) {
+    // Device-specific frame display code
     output_frame_to_display();
     return 100;
 }
 
 void core1_func() {
+    // No additional config required
     render_loop();
 }
 
@@ -193,10 +216,12 @@ int vga_main(void) {
     mutex_init(&frame_logic_mutex);
     frame_update_logic();
 
-    // Core 1 will wait for us to finish video setup, and then start rendering
+    // Both cores run the rendering loop, generating alternating lines
     multicore_launch_core1(core1_func);
 
 #if PICO_ON_DEVICE
+    // Timer callback generates output to the device
+    // Display sheering is expected because it is async with the fractal generation
     add_alarm_in_us(100, timer_callback, NULL, true);
 #endif
     render_loop();
@@ -205,8 +230,10 @@ int vga_main(void) {
 
 void __time_critical_func(frame_update_logic)() {
     if (!params_ready) {
+        // Slowly zoom in the visualisation on adjacent frames
         float scale = DISPLAY_HEIGHT / 2;
         static int foo;
+        // Zoom towards the coordinates (-0.10, 0.92)
         float offx = (MIN(foo, 200)) / 500.0f;
         float offy = -(MIN(foo, 230)) / 250.0f;
         scale *= (10000 + (foo++) * (float) foo) / 10000.0f;
@@ -220,6 +247,7 @@ void __time_critical_func(frame_update_logic)() {
 }
 
 int main(void) {
+    // Configure any optional over-clocking for improved frame-rate
     uint base_freq;
 #if PICO_SCANVIDEO_48MHZ
     base_freq = 48000;
