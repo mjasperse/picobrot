@@ -27,3 +27,10 @@ pico_add_extra_outputs(firmware)
 # Add the standard library to the build
 target_link_libraries(firmware pico_stdlib pico_multicore)
 
+# Add the hardware libraries to the build
+target_link_libraries(firmware
+	hardware_spi
+	hardware_i2c
+	hardware_pwm
+)
+

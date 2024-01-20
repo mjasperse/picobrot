@@ -100,11 +100,6 @@ void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len)
     i2c_read_blocking(I2C_PORT, addr, pData, Len, false);
 }
 
-uint16_t DEC_ADC_Read(void)
-{
-    return adc_read();
-}
-
 /**
  * GPIO Mode
  **/
@@ -182,10 +177,6 @@ uint8_t DEV_Module_Init(void)
     stdio_init_all();
     // GPIO Config
     DEV_GPIO_Init();
-    // ADC
-    adc_init();
-    adc_gpio_init(BAT_ADC_PIN);
-    adc_select_input(BAR_CHANNEL);
     // PWM Config
     gpio_set_function(LCD_BL_PIN, GPIO_FUNC_PWM);
     slice_num = pwm_gpio_to_slice_num(LCD_BL_PIN);

@@ -31,7 +31,6 @@
 
 #include "stdio.h"
 #include "pico/stdlib.h"
-#include "hardware/adc.h"
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
@@ -71,8 +70,6 @@ void DEV_GPIO_Mode(uint16_t Pin, uint16_t Mode);
 void DEV_KEY_Config(uint16_t Pin);
 void DEV_Digital_Write(uint16_t Pin, uint8_t Value);
 uint8_t DEV_Digital_Read(uint16_t Pin);
-
-uint16_t DEC_ADC_Read(void);
 
 void DEV_SPI_WriteByte(uint8_t Value);
 void DEV_SPI_Write_nByte(uint8_t *pData, uint32_t Len);
