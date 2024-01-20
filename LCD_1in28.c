@@ -377,16 +377,16 @@ void LCD_1IN28_SetWindows(UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend)
 {
     //set the X coordinates
     LCD_1IN28_SendCommand(0x2A);
-    LCD_1IN28_SendData_8Bit(0x00);
+    LCD_1IN28_SendData_8Bit(Xstart>>8);
     LCD_1IN28_SendData_8Bit(Xstart);
 	LCD_1IN28_SendData_8Bit((Xend-1)>>8);
     LCD_1IN28_SendData_8Bit(Xend-1);
 
     //set the Y coordinates
     LCD_1IN28_SendCommand(0x2B);
-    LCD_1IN28_SendData_8Bit(0x00);
+    LCD_1IN28_SendData_8Bit(Ystart>>8);
 	LCD_1IN28_SendData_8Bit(Ystart);
-	LCD_1IN28_SendData_8Bit((Xend-1)>>8);
+	LCD_1IN28_SendData_8Bit((Yend-1)>>8);
     LCD_1IN28_SendData_8Bit(Yend-1);
 
     LCD_1IN28_SendCommand(0X2C);
@@ -436,7 +436,7 @@ void LCD_1IN28_DisplayWindows(UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend
     UWORD j;
     LCD_1IN28_SetWindows(Xstart, Ystart, Xend , Yend);
     DEV_Digital_Write(LCD_DC_PIN, 1);;
-    for (j = Ystart; j < Yend - 1; j++) {
+    for (j = Ystart; j < Yend; j++) {
         Addr = Xstart + j * LCD_1IN28_WIDTH ;
         DEV_SPI_Write_nByte((uint8_t *)&Image[Addr], (Xend-Xstart)*2);
     }
