@@ -6,6 +6,8 @@ pico_sdk_init()
 
 add_executable(firmware
 	mandelbrot.c
+	DEV_Config.c
+	LCD_1in28.c
 )
 
 target_compile_definitions(firmware PRIVATE
