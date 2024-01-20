@@ -8,6 +8,7 @@ add_executable(firmware
 	mandelbrot.c
 	DEV_Config.c
 	LCD_1in28.c
+	QMI8658.c
 )
 
 target_compile_definitions(firmware PRIVATE
