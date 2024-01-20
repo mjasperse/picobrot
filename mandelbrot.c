@@ -39,6 +39,9 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Must be able to represent
 #define FRAC_BITS 25u
 
+// Define the framerate of updates to the LCD (60 fps)
+#define FRAME_INTERVAL  1000000/60
+
 #if USE_FLOAT
 //typedef float fixed;
 typedef double fixed;
@@ -204,7 +207,7 @@ void __time_critical_func(render_loop)() {
 int64_t timer_callback(alarm_id_t alarm_id, void *user_data) {
     // Device-specific frame display code
     output_frame_to_display();
-    return 100;
+    return FRAME_INTERVAL;
 }
 
 void core1_func() {
@@ -222,7 +225,7 @@ int vga_main(void) {
 #if PICO_ON_DEVICE
     // Timer callback generates output to the device
     // Display sheering is expected because it is async with the fractal generation
-    add_alarm_in_us(100, timer_callback, NULL, true);
+    add_alarm_in_us(FRAME_INTERVAL, timer_callback, NULL, true);
 #endif
     render_loop();
     return 0;
