@@ -353,7 +353,8 @@ parameter:
 void LCD_1IN28_Init(UBYTE Scan_dir)
 {
     //Turn on the backlight
-    //DEV_SET_PWM(100);
+    DEV_SET_PWM(100);
+
     //Hardware reset
     LCD_1IN28_Reset();
 

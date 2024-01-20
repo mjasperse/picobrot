@@ -7,12 +7,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "pico.h"
-#include "pico/scanvideo.h"
-#include "pico/sync.h"
-#include "pico/scanvideo/composable_scanline.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "config.h"
 
 #if PICO_ON_DEVICE
 
@@ -22,8 +20,6 @@
 #endif
 
 CU_REGISTER_DEBUG_PINS(generation)
-
-#define vga_mode vga_mode_320x240_60
 
 //#define USE_FLOAT 1
 
@@ -84,7 +80,6 @@ static inline fixed fixed_mult(fixed a, fixed b) {
 struct mutex frame_logic_mutex;
 static void frame_update_logic();
 
-void fill_scanline_buffer(struct scanvideo_scanline_buffer *buffer);
 static uint y;
 static fixed x0, y0;
 static fixed dx0_dx, dy0_dy;
@@ -92,9 +87,10 @@ static fixed max;
 static bool params_ready;
 
 
-static uint16_t framebuffer[320 * 240];
+static uint16_t framebuffer[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 //static uint16_t *framebuffer;
 
+#define PICO_SCANVIDEO_PIXEL_FROM_RGB8  RGB565
 static uint16_t colors[16] = {
         PICO_SCANVIDEO_PIXEL_FROM_RGB8(66, 30, 15),
         PICO_SCANVIDEO_PIXEL_FROM_RGB8(25, 7, 26),
@@ -152,6 +148,13 @@ static void scanline(uint16_t *line_buffer, uint length, fixed mx, fixed my, fix
     }
 }
 
+void output_frame_to_display()
+{
+    // customize this function for the particular attached display
+    LCD_1IN28_Display(framebuffer);
+}
+
+
 // "Worker thread" for each core
 void __time_critical_func(render_loop)() {
     static uint32_t last_frame_num = 0;
@@ -159,7 +162,7 @@ void __time_critical_func(render_loop)() {
     printf("Rendering on core %d\n", core_num);
     while (true) {
         mutex_enter_blocking(&frame_logic_mutex);
-        if (y == vga_mode.height) {
+        if (y == DISPLAY_HEIGHT) {
             params_ready = false;
             frame_update_logic();
             y = 0;
@@ -169,69 +172,25 @@ void __time_critical_func(render_loop)() {
         fixed _dx0_dx = dx0_dx, _dy0_dy = dy0_dy;
         mutex_exit(&frame_logic_mutex);
 
-        scanline(framebuffer + _y * 320, 320, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
-#if !PICO_ON_DEVICE
-        struct scanvideo_scanline_buffer *buffer = scanvideo_begin_scanline_generation(true);
-        fill_scanline_buffer(buffer);
-        scanvideo_end_scanline_generation(buffer);
-#endif
+        scanline(framebuffer + _y * DISPLAY_WIDTH, DISPLAY_WIDTH, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
     }
 }
 
 int64_t timer_callback(alarm_id_t alarm_id, void *user_data) {
-    struct scanvideo_scanline_buffer *buffer = scanvideo_begin_scanline_generation(false);
-    while (buffer) {
-        fill_scanline_buffer(buffer);
-        scanvideo_end_scanline_generation(buffer);
-        buffer = scanvideo_begin_scanline_generation(false);
-    }
+    output_frame_to_display();
     return 100;
 }
 
-void fill_scanline_buffer(struct scanvideo_scanline_buffer *buffer) {
-    static uint32_t postamble[] = {
-            0x0000u | (COMPOSABLE_EOL_ALIGN << 16)
-    };
-
-    buffer->data[0] = 4;
-    buffer->data[1] = host_safe_hw_ptr(buffer->data + 8);
-    buffer->data[2] = 158; // first four pixels are handled separately
-    uint16_t *pixels = framebuffer + scanvideo_scanline_number(buffer->scanline_id) * 320;
-    buffer->data[3] = host_safe_hw_ptr(pixels + 4);
-    buffer->data[4] = count_of(postamble);
-    buffer->data[5] = host_safe_hw_ptr(postamble);
-    buffer->data[6] = 0;
-    buffer->data[7] = 0;
-    buffer->data_used = 8;
-
-    // 3 pixel run followed by main run, consuming the first 4 pixels
-    buffer->data[8] = (pixels[0] << 16u) | COMPOSABLE_RAW_RUN;
-    buffer->data[9] = (pixels[1] << 16u) | 0;
-    buffer->data[10] = (COMPOSABLE_RAW_RUN << 16u) | pixels[2];
-    buffer->data[11] = ((317 + 1 - 3) << 16u) | pixels[3]; // note we add one for the black pixel at the end
-}
-
-struct semaphore video_setup_complete;
-
 void core1_func() {
-    sem_acquire_blocking(&video_setup_complete);
     render_loop();
 }
 
 int vga_main(void) {
-//    framebuffer = calloc(320*240, sizeof(uint16_t));
     mutex_init(&frame_logic_mutex);
-    sem_init(&video_setup_complete, 0, 1);
+    frame_update_logic();
 
     // Core 1 will wait for us to finish video setup, and then start rendering
     multicore_launch_core1(core1_func);
-
-    hard_assert(vga_mode.width + 4 <= PICO_SCANVIDEO_MAX_SCANLINE_BUFFER_WORDS * 2);
-    scanvideo_setup(&vga_mode);
-    scanvideo_timing_enable(true);
-
-    frame_update_logic();
-    sem_release(&video_setup_complete);
 
 #if PICO_ON_DEVICE
     add_alarm_in_us(100, timer_callback, NULL, true);
@@ -240,25 +199,15 @@ int vga_main(void) {
     return 0;
 }
 
-static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
-    // Need to pivot the first pixel with the count so that PIO can keep up
-    // with its 1 pixel per 2 clocks
-    uint32_t first = dest->data[0];
-    uint32_t second = dest->data[1];
-    dest->data[0] = (first & 0x0000ffffu) | ((second & 0x0000ffffu) << 16);
-    dest->data[1] = (second & 0xffff0000u) | ((first & 0xffff0000u) >> 16);
-    dest->status = SCANLINE_OK;
-}
-
 void __time_critical_func(frame_update_logic)() {
     if (!params_ready) {
-        float scale = vga_mode.height / 2;
+        float scale = DISPLAY_HEIGHT / 2;
         static int foo;
         float offx = (MIN(foo, 200)) / 500.0f;
         float offy = -(MIN(foo, 230)) / 250.0f;
         scale *= (10000 + (foo++) * (float) foo) / 10000.0f;
-        x0 = float_to_fixed(offx + (-vga_mode.width / 2) / scale - 0.5f);
-        y0 = float_to_fixed(offy + (-vga_mode.height / 2) / scale);
+        x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
+        y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
         dx0_dx = float_to_fixed(1.0f / scale);
         dy0_dy = float_to_fixed(1.0f / scale);
         max = float_to_fixed(4.f);
@@ -282,6 +231,11 @@ int main(void) {
     set_sys_clock_khz(base_freq * 3, true);
 #endif
 #endif
+
+    // Initialise the device hardware [Waveshare RP2040-LCD-1.28]
+    DEV_Module_Init();
+    LCD_1IN28_Init(HORIZONTAL);
+
     // Re init uart now that clk_peri has changed
     setup_default_uart();
 //    gpio_debug_pins_init();
