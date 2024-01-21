@@ -322,13 +322,17 @@ void __time_critical_func(frame_update_logic)() {
     static float offx = 0, offy = 0;
     if (!params_ready) {
         // Slowly zoom in the visualisation on adjacent frames
-        float scale = DISPLAY_HEIGHT / 2;
         static int foo = 0;
+        float scale = DISPLAY_HEIGHT / 2;
+        scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
         if (use_accel)
         {
-            offx += (accel_meas[1] - accel_init[1])/200;
-            offy += (accel_meas[2] - accel_init[2])/200;
-            // window bounds
+            // Allow the acceleration to move the visualization window
+            // The accelerometer is measured in a timer callback to permit smoothing
+            // Also scale by the zoom level to reduce jitter at high zoom
+            offx += (accel_meas[1] - accel_init[1]) / scale;
+            offy += (accel_meas[2] - accel_init[2]) / scale;
+            // Window bounds - prevent going out of range
             if (offx < -1) offx = -1;
             else if (offx > 1.5) offx = 1.5;
             if (offy < -1.5) offy = -1.5;
@@ -340,7 +344,6 @@ void __time_critical_func(frame_update_logic)() {
             offx = (MIN(foo, 200)) / 500.0f;
             offy = -(MIN(2*foo, 230)) / 250.0f;
         }
-        scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
         x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
         y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
         dx0_dx = float_to_fixed(DERIV_SHIFT / scale);
