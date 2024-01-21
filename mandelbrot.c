@@ -7,6 +7,8 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
+
 #include "pico.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
@@ -26,6 +28,9 @@ CU_REGISTER_DEBUG_PINS(generation)
 
 
 // *** CONFIGURATION OPTIONS ***
+// Set which fractal to generate - either the Julia set or the Mandelbrot set
+#define JULIA_MODE 1
+
 // Maximum number of iterations for the escape calculation
 // Increase for more detail around the set edges at the expense of calculation time
 #define MAX_ITERS 63//127//255
@@ -158,9 +163,10 @@ struct mutex frame_logic_mutex;
 static void frame_update_logic();
 
 static uint y;
-static fixed x0, y0;
+static fixed view_x0, view_y0;
 static fixed dx0_dx, dy0_dy;
 static fixed max;
+static fixed julia_cr, julia_ci;
 static bool params_ready;
 
 static uint8_t use_accel = 0;
@@ -199,10 +205,15 @@ static void generate_fractal_line(uint16_t *line_buffer, uint xstart, uint lengt
     mx += xstart * dmx_dx;
     for (int x = xstart; x < length; ++x) {
         int iters;
-        fixed cr = mx / DERIV_SHIFT;
-        fixed ci = my / DERIV_SHIFT;
-        fixed zr = cr;
-        fixed zi = ci;
+        fixed zr = mx / DERIV_SHIFT;
+        fixed zi = my / DERIV_SHIFT;
+#if JULIA_MODE
+        fixed cr = julia_cr;
+        fixed ci = julia_ci;
+#else   // Mandelbrot fractal
+        fixed cr = zr;
+        fixed ci = zi;
+#endif
         fixed xold = 0;
         fixed yold = 0;
         fixed z2;
@@ -285,7 +296,7 @@ void __time_critical_func(render_loop)() {
         }
         // Move to the next line
         uint _y = y++;
-        fixed _x0 = x0 * DERIV_SHIFT, _y0 = y0 * DERIV_SHIFT;
+        fixed _x0 = view_x0 * DERIV_SHIFT, _y0 = view_y0 * DERIV_SHIFT;
         fixed _dx0_dx = dx0_dx, _dy0_dy = dy0_dy;
         mutex_exit(&frame_logic_mutex);
         // Generate this line of the image
@@ -354,7 +365,16 @@ void __time_critical_func(frame_update_logic)() {
         // Slowly zoom in the visualisation on adjacent frames
         static int foo = 0;
         float scale = DISPLAY_HEIGHT / 2;
-        scale *= INITIAL_ZOOM + ((foo++) * (float)foo) / ZOOM_FACTOR;
+#if JULIA_MODE
+        float arg = (200 + ++foo) * M_PI/500;
+        float julia_mag = 0.7885;
+        // The trig calculation here is expensive, could perhaps be replaced by CORDIC lookup
+        julia_cr = float_to_fixed(julia_mag * cos(arg));
+        julia_ci = float_to_fixed(julia_mag * sin(arg));
+        scale /= 1.8;
+        offx = 0.5;
+#else
+        scale *= INITIAL_ZOOM * ((foo) * (float)foo) / ZOOM_FACTOR;
         if (use_accel)
         {
             // Allow the acceleration to move the visualization window
@@ -374,8 +394,9 @@ void __time_critical_func(frame_update_logic)() {
             offx = (MIN(foo, 200)) / 500.0f;
             offy = -(MIN(2*foo, 230)) / 250.0f;
         }
-        x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
-        y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
+#endif
+        view_x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
+        view_y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
         dx0_dx = float_to_fixed(DERIV_SHIFT / scale);
         dy0_dy = dx0_dx;
         max = float_to_fixed(4.f);
