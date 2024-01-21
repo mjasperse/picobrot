@@ -44,6 +44,10 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Must be able to represent
 #define FRAC_BITS 25u
 
+// Apply colorization to the interior of the Mandelbrot set?
+// Not necessarily a meaningful visualisation, but interesting to look at
+#define COLOR_INTERIOR 1
+
 // Define the framerate of updates to the LCD
 // If not defined, writes to LCD at the end of each frame calculation
 //#define FRAME_INTERVAL  1000000/60  // 60 fps
@@ -185,13 +189,15 @@ static void generate_fractal_line(uint16_t *line_buffer, uint length, fixed mx, 
         fixed zi = ci;
         fixed xold = 0;
         fixed yold = 0;
+        fixed z2;
         int period = 0;
         // visualise the Mandelbrot set using the escape algorithm
         // https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Optimized_escape_time_algorithms
         for (iters = 0; iters < MAX_ITERS; ++iters) {
             fixed zr2 = fixed_mult(zr, zr);
             fixed zi2 = fixed_mult(zi, zi);
-            if (zr2 + zi2 > max) {
+            z2 = zr2 + zi2;
+            if (z2 > max) {
                 // trajectory diverging to infinity
                 break;
             }
@@ -210,9 +216,16 @@ static void generate_fractal_line(uint16_t *line_buffer, uint length, fixed mx, 
                 yold = zi;
             }
         }
-        if (iters >= MAX_ITERS) {
             // points within the set are black
+        if (iters >= MAX_ITERS) {
+#if COLOR_INTERIOR
+            // did not escape, so colorize based on the trajectory
+            iters = z2 >> 8;
+            line_buffer[x] = colors[iters & 15u] & 0x1FF8;  // drop green
+#else
+            // just draw as black
             line_buffer[x] = 0;
+#endif
         } else {
             // points outside the set are colored based on their escape time
             line_buffer[x] = colors[iters & 15u];
