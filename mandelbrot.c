@@ -28,14 +28,17 @@ CU_REGISTER_DEBUG_PINS(generation)
 // *** CONFIGURATION OPTIONS ***
 // Maximum number of iterations for the escape calculation
 // Increase for more detail around the set edges at the expense of calculation time
-#define MAX_ITERS 127//255
+#define MAX_ITERS 63//127//255
 
 // Use floating-point arithmetic instead of fixed-point?
 // Runs extremely slowly on the device, helpful for sanity-checking
 //#define USE_FLOAT 1
 
-// Enable overclocking of sysclock for faster calculation and smoother rendering
-#define TURBO_BOOST 1
+// Special reduced-precision mode for much faster calculation speed at the expense of limiting the zoom level
+#define FAST_AND_LOOSE_MODE 1
+
+// Enable overclocking of sysclock for increased calculation and smoother rendering
+#define TURBO_BOOST 0
 
 // Number of fractional bits to use for fixed-point calculations
 // Must be able to represent
@@ -53,6 +56,9 @@ CU_REGISTER_DEBUG_PINS(generation)
 
 
 #if USE_FLOAT
+// Floating point mode for best resolution but slowest calculation speed
+// 32-bit "float" offers very limited advantage over 32-bit fixed-point, so use 64-bit "double" instead
+
 //typedef float fixed;
 typedef double fixed;
 static inline fixed float_to_fixed(float x) {
@@ -61,7 +67,31 @@ static inline fixed float_to_fixed(float x) {
 static inline fixed fixed_mult(fixed a, fixed b) {
     return a*b;
 }
+
+#elif FAST_AND_LOOSE_MODE
+// A variation of the fixed-point calculation where all intermediate calculations can be represented in I32.
+// This means that zr,zi can be at most I16, so choose FRAC_BITS appropriately.
+// This causes issue with truncation of the derivatives dx0_dx and dy0_dy, so we shift those up and then
+// shift back down for the fractal calculation.
+
+#undef FRAC_BITS            // ignore previous setting, for custom faster options
+#define FRAC_BITS   13      // at most 13 bits, so we can represent x^2 in an I16
+#define DERIV_SHIFT (1<<8)  // at most 8 bits, since it gets multiplied by DISPLAY_WIDTH=240
+
+typedef int32_t fixed;      // in principle this could potentially be I16, but requires better handling of intermediate values
+
+static inline fixed float_to_fixed(float x) {
+    return (fixed) (x * (1u << FRAC_BITS));
+}
+
+static inline fixed fixed_mult(fixed a, fixed b) {
+    // FRAC_BITS is chosen so that this multiplication does not overflow an I32
+    return (a * b) >> FRAC_BITS;
+}
+
 #else
+// Fixed-point calculation mode using 32-bit integers
+
 typedef int32_t fixed;
 
 static inline fixed float_to_fixed(float x) {
@@ -69,6 +99,7 @@ static inline fixed float_to_fixed(float x) {
 }
 
 #if !PICO_ON_DEVICE || (FRAC_BITS != 25)
+// General-purpose fixed-point calculation, where the intermediate result must be handled as I64
 static inline fixed fixed_mult(fixed a, fixed b) {
     int64_t r = ((int64_t) a) * b;
     return (int32_t) (r >> FRAC_BITS);
@@ -101,6 +132,11 @@ static inline fixed fixed_mult(fixed a, fixed b) {
 }
 #endif
 
+#endif
+
+#ifndef DERIV_SHIFT
+// derivative calculation does not use locally-increased precision
+#define DERIV_SHIFT  1
 #endif
 
 struct mutex frame_logic_mutex;
@@ -142,8 +178,8 @@ static uint16_t colors[16] = {
 static void generate_fractal_line(uint16_t *line_buffer, uint length, fixed mx, fixed my, fixed dmx_dx) {
     for (int x = 0; x < length; ++x) {
         int iters;
-        fixed cr = mx;
-        fixed ci = my;
+        fixed cr = mx / DERIV_SHIFT;
+        fixed ci = my / DERIV_SHIFT;
         fixed zr = cr;
         fixed zi = ci;
         fixed xold = 0;
@@ -209,7 +245,7 @@ void __time_critical_func(render_loop)() {
         }
         // Move to the next line
         uint _y = y++;
-        fixed _x0 = x0, _y0 = y0;
+        fixed _x0 = x0 * DERIV_SHIFT, _y0 = y0 * DERIV_SHIFT;
         fixed _dx0_dx = dx0_dx, _dy0_dy = dy0_dy;
         mutex_exit(&frame_logic_mutex);
         // Generate this line of the image
@@ -284,8 +320,8 @@ void __time_critical_func(frame_update_logic)() {
         scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
         x0 = float_to_fixed(offx + (-DISPLAY_WIDTH / 2) / scale - 0.5f);
         y0 = float_to_fixed(offy + (-DISPLAY_HEIGHT / 2) / scale);
-        dx0_dx = float_to_fixed(1.0f / scale);
-        dy0_dy = float_to_fixed(1.0f / scale);
+        dx0_dx = float_to_fixed(DERIV_SHIFT / scale);
+        dy0_dy = dx0_dx;
         max = float_to_fixed(4.f);
         params_ready = true;
     }
