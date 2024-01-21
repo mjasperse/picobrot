@@ -7,7 +7,6 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <math.h>
 
 #include "pico.h"
 #include "hardware/gpio.h"
@@ -28,7 +27,7 @@ CU_REGISTER_DEBUG_PINS(generation)
 
 
 // *** CONFIGURATION OPTIONS ***
-// Set which fractal to generate - either the Julia set or the Mandelbrot set
+// Define the fractal to generate - either the Julia set or the Mandelbrot set
 #define JULIA_MODE 1
 
 // Maximum number of iterations for the escape calculation
@@ -203,6 +202,7 @@ static uint16_t colors[16] = {
 
 static void generate_fractal_line(uint16_t *line_buffer, uint xstart, uint length, fixed mx, fixed my, fixed dmx_dx) {
     mx += xstart * dmx_dx;
+
     for (int x = xstart; x < length; ++x) {
         int iters;
         fixed zr = mx / DERIV_SHIFT;
@@ -363,21 +363,60 @@ int vga_main(void) {
     return 0;
 }
 
+//Cordic in 16 bit signed fixed point math
+//Function is valid for arguments in range -pi/2 -- pi/2
+//for values pi/2--pi: value = half_pi-(theta-half_pi) and similarly for values -pi---pi/2
+//
+// Retrieved from https://www.dcs.gla.ac.uk/~jhw/cordic/cordic-16bit.h, January 2024
+//
+#define cordic_1K 0x26DD
+#define half_pi 0x6487
+#define MUL 16384.000000
+#define CORDIC_NTAB 16
+int cordic_ctab [] = {0x3243, 0x1DAC, 0x0FAD, 0x07F5, 0x03FE, 0x01FF, 0x00FF, 0x007F,
+                      0x003F, 0x001F, 0x000F, 0x0007, 0x0003, 0x0001, 0x0000, 0x0000, };
+
+void cordic(int theta, int *s, int *c, int n)
+{
+  int k, d, tx, ty, tz;
+  int x=cordic_1K,y=0,z=theta;
+  n = (n>CORDIC_NTAB) ? CORDIC_NTAB : n;
+  for (k=0; k<n; ++k)
+  {
+    d = (z>=0) ? 0 : -1;
+    tx = x - (((y>>k) ^ d) - d);
+    ty = y + (((x>>k) ^ d) - d);
+    tz = z - ((cordic_ctab[k] ^ d) - d);
+    x = tx; y = ty; z = tz;
+  }
+ *c = x; *s = y;
+}
+
+
 void __time_critical_func(frame_update_logic)() {
     static float offx = 0, offy = 0;
     if (!params_ready) {
         // Slowly zoom in the visualisation on adjacent frames
-        static int foo = 0;
         float scale = DISPLAY_HEIGHT / 2;
 #if JULIA_MODE
-        float arg = (200 + ++foo) * M_PI/500;
+        static int foo = 200;
         float julia_mag = 0.7885;
-        // The trig calculation here is expensive, could perhaps be replaced by CORDIC lookup
-        julia_cr = float_to_fixed(julia_mag * cos(arg));
-        julia_ci = float_to_fixed(julia_mag * sin(arg));
+        if (++foo > 750) foo -= 1000;
+        int arg = foo * half_pi*2/500;
+        // Use a fixed-point CORDIC lookup for the trig calculation
+        // Argument must be between -pi/2 and pi/2
+        bool invert = arg > half_pi;
+        if (invert) arg -= 2*half_pi;
+        int cordic_cos, cordic_sin;
+        cordic(arg, &cordic_sin, &cordic_cos, CORDIC_NTAB);
+        if (invert) { cordic_sin = -cordic_sin; cordic_cos = -cordic_cos; }
+        // The following could be cleaned up a bit, but handles both signs of (FRAC_BITS-14)
+        julia_cr = float_to_fixed((julia_mag * cordic_cos) / (1<<14));
+        julia_ci = float_to_fixed((julia_mag * cordic_sin) / (1<<14));
         scale /= 1.8;
         offx = 0.5;
 #else
+        static int foo = 0;
         scale *= INITIAL_ZOOM * ((foo) * (float)foo) / ZOOM_FACTOR;
         if (use_accel)
         {
