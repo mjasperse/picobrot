@@ -4,7 +4,7 @@
 
 #define QMI8658_SLAVE_ADDR_L 0x6a
 #define QMI8658_SLAVE_ADDR_H 0x6b
-#define QMI8658_printf printf
+#define QMI8658_printf //printf
 
 #define QMI8658_UINT_MG_DPS
 

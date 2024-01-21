@@ -59,6 +59,8 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Define the number of measurements for the initial value
 #define ACCEL_INITIAL   10
 
+// Print frame calculation times to UART
+#define DEBUG_FRAMERATE 1
 
 #if USE_FLOAT
 // Floating point mode for best resolution but slowest calculation speed
@@ -156,6 +158,7 @@ static bool params_ready;
 static uint8_t use_accel = 0;
 static float accel_meas[3] = {0,0,0};
 static float accel_init[3] = {0,0,0};
+static uint32_t last_frame = 0;
 
 static uint16_t framebuffer[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 
@@ -242,6 +245,11 @@ void output_frame_to_display()
 #else
     LCD_1IN28_DisplayDMA(framebuffer);
 #endif
+#if DEBUG_FRAMERATE
+    uint32_t time_now = time_us_32();
+    printf("dt = %u\n", (time_now - last_frame)/1000);
+    last_frame = time_now;
+#endif
 }
 
 
@@ -297,6 +305,10 @@ void core1_func() {
 int vga_main(void) {
     mutex_init(&frame_logic_mutex);
     frame_update_logic();
+
+    // wait for UART to connect
+    sleep_ms(100);
+    puts("=== Starting picobrot ===");
 
     // Both cores run the rendering loop, generating alternating lines
     multicore_launch_core1(core1_func);
