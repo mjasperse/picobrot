@@ -163,7 +163,6 @@ void DEV_GPIO_Init(void)
 
     DEV_Digital_Write(LCD_CS_PIN, 1);
     DEV_Digital_Write(LCD_DC_PIN, 0);
-    DEV_Digital_Write(LCD_BL_PIN, 1);
 }
 
 
@@ -181,7 +180,7 @@ uint8_t DEV_Module_Init(void)
     gpio_set_function(LCD_BL_PIN, GPIO_FUNC_PWM);
     slice_num = pwm_gpio_to_slice_num(LCD_BL_PIN);
     pwm_set_wrap(slice_num, 100);
-    pwm_set_chan_level(slice_num, PWM_CHAN_B, 0);
+    pwm_set_chan_level(slice_num, PWM_CHAN_B, 100);
     pwm_set_clkdiv(slice_num, 50);
     pwm_set_enabled(slice_num, true);
 
