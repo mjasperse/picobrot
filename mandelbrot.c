@@ -45,7 +45,8 @@ CU_REGISTER_DEBUG_PINS(generation)
 #define FRAC_BITS 25u
 
 // Define the framerate of updates to the LCD
-#define FRAME_INTERVAL  1000000/60  // 60 fps
+// If not defined, writes to LCD at the end of each frame calculation
+//#define FRAME_INTERVAL  1000000/60  // 60 fps
 
 // Define the measurement rate for the accelerometer
 #define ACCEL_INTERVAL  10000       // 10 ms
@@ -240,6 +241,11 @@ void __time_critical_func(render_loop)() {
         mutex_enter_blocking(&frame_logic_mutex);
         if (y == DISPLAY_HEIGHT) {
             params_ready = false;
+#if !FRAME_INTERVAL && !CONFIG_NO_DMA
+            // Kick off the DMA to display as soon as the frame is complete
+            // Note that the mutex is held so this should NOT be a blocking transmission
+            output_frame_to_display();
+#endif
             frame_update_logic();
             y = 0;
         }
@@ -253,11 +259,13 @@ void __time_critical_func(render_loop)() {
     }
 }
 
+#if FRAME_INTERVAL
 int64_t render_callback(alarm_id_t alarm_id, void *user_data) {
     // Device-specific frame display code
     output_frame_to_display();
     return FRAME_INTERVAL;
 }
+#endif
 
 int64_t accelerometer_callback(alarm_id_t alarm_id, void *user_data) {
     // The accelerometer measurements are noisy, so apply some exponential damping
@@ -281,9 +289,11 @@ int vga_main(void) {
     multicore_launch_core1(core1_func);
 
 #if PICO_ON_DEVICE
-    // Timer callback generates output to the device
-    // Display sheering is expected because it is async with the fractal generation
-    add_alarm_in_us(FRAME_INTERVAL, render_callback, NULL, true);
+    #if FRAME_INTERVAL
+        // Timer callback generates output to the device
+        // Display sheering is expected because it is async with the fractal generation
+        add_alarm_in_us(FRAME_INTERVAL, render_callback, NULL, true);
+    #endif
 
     if (use_accel)
     {
