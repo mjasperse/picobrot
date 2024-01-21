@@ -317,6 +317,7 @@ int64_t render_callback(alarm_id_t alarm_id, void *user_data) {
 }
 #endif
 
+#if ACCEL_INTERVAL
 int64_t accelerometer_callback(alarm_id_t alarm_id, void *user_data) {
     // The accelerometer measurements are noisy, so apply some exponential damping
     float acc[3] = {0,0,0};
@@ -325,6 +326,7 @@ int64_t accelerometer_callback(alarm_id_t alarm_id, void *user_data) {
         accel_meas[i] = ACCEL_DAMPING*acc[i] + (1-ACCEL_DAMPING)*accel_meas[i];
     return ACCEL_INTERVAL;
 }
+#endif
 
 void core1_func() {
     // No additional config required
@@ -343,17 +345,19 @@ int vga_main(void) {
     multicore_launch_core1(core1_func);
 
 #if PICO_ON_DEVICE
-    #if FRAME_INTERVAL
-        // Timer callback generates output to the device
-        // Display sheering is expected because it is async with the fractal generation
-        add_alarm_in_us(FRAME_INTERVAL, render_callback, NULL, true);
-    #endif
+#if FRAME_INTERVAL
+    // Timer callback generates output to the device
+    // Display sheering is expected because it is async with the fractal generation
+    add_alarm_in_us(FRAME_INTERVAL, render_callback, NULL, true);
+#endif
 
+#if ACCEL_INTERVAL
     if (use_accel)
     {
         // Set a callback for reading the accelerometer
         add_alarm_in_us(ACCEL_INTERVAL, accelerometer_callback, NULL, true);
     }
+#endif
 #endif
     render_loop();
     return 0;
