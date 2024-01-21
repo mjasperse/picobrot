@@ -37,6 +37,9 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Special reduced-precision mode for much faster calculation speed at the expense of limiting the zoom level
 #define FAST_AND_LOOSE_MODE 1
 
+// Skip calculating pixels outside the circular LCD shape?
+#define CALCULATE_CIRCLE_ONLY 1
+
 // Enable overclocking of sysclock for increased calculation and smoother rendering
 #define TURBO_BOOST 0
 
@@ -46,7 +49,7 @@ CU_REGISTER_DEBUG_PINS(generation)
 
 // Apply colorization to the interior of the Mandelbrot set?
 // Not necessarily a meaningful visualisation, but interesting to look at
-#define COLOR_INTERIOR 1
+#define COLOR_INTERIOR 0
 
 // Define the framerate of updates to the LCD
 // If not defined, writes to LCD at the end of each frame calculation
@@ -162,6 +165,10 @@ static uint32_t last_frame = 0;
 
 static uint16_t framebuffer[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 
+#if CALCULATE_CIRCLE_ONLY
+static uint8_t start_col[DISPLAY_HEIGHT];
+#endif
+
 
 #define PICO_SCANVIDEO_PIXEL_FROM_RGB8  RGB565
 static uint16_t colors[16] = {
@@ -183,8 +190,9 @@ static uint16_t colors[16] = {
         PICO_SCANVIDEO_PIXEL_FROM_RGB8(106, 52, 3),
 };
 
-static void generate_fractal_line(uint16_t *line_buffer, uint length, fixed mx, fixed my, fixed dmx_dx) {
-    for (int x = 0; x < length; ++x) {
+static void generate_fractal_line(uint16_t *line_buffer, uint xstart, uint length, fixed mx, fixed my, fixed dmx_dx) {
+    mx += xstart * dmx_dx;
+    for (int x = xstart; x < length; ++x) {
         int iters;
         fixed cr = mx / DERIV_SHIFT;
         fixed ci = my / DERIV_SHIFT;
@@ -276,7 +284,12 @@ void __time_critical_func(render_loop)() {
         fixed _dx0_dx = dx0_dx, _dy0_dy = dy0_dy;
         mutex_exit(&frame_logic_mutex);
         // Generate this line of the image
-        generate_fractal_line(&framebuffer[_y * DISPLAY_WIDTH], DISPLAY_WIDTH, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
+#if CALCULATE_CIRCLE_ONLY
+        uint xstart = start_col[_y];
+#else
+        uint xstart = 0;
+#endif
+        generate_fractal_line(&framebuffer[_y * DISPLAY_WIDTH], xstart, DISPLAY_WIDTH-xstart, _x0, _y0 + _dy0_dy * _y, _dx0_dx);
     }
 }
 
@@ -365,6 +378,36 @@ void __time_critical_func(frame_update_logic)() {
     }
 }
 
+
+
+/*
+* fixed sqrtF2F( fixed X );
+*
+* Fixed to fixed point square roots.
+* RETURNS the fixed point square root of X (fixed).
+* REQUIRES X is positive.
+*
+* Christophe MEESSEN, 1993.
+*
+* https://groups.google.com/g/comp.lang.c/c/IpwKbw0MAxw
+*/
+uint32_t sqrtF2F(uint32_t X) {
+    uint32_t r = X;
+    uint32_t b = 1<<30;
+    uint32_t q = 0;
+    while ( b >= 256 ) {
+        uint32_t t = q + b;
+        if( r >= t ) {
+            r = r - t;
+            q = t + b;
+        }
+        r = r << 1; /* shift left 1 bit */
+        b = b >> 1; /* shift right 1 bit */
+    }
+    return( q >> 8 ); /* shift right 8 bits */
+}
+
+
 int main(void) {
     // Configure any optional over-clocking for improved frame-rate
     uint base_freq;
@@ -385,6 +428,7 @@ int main(void) {
 
     // Initialise the device hardware [Waveshare RP2040-LCD-1.28]
     DEV_Module_Init();
+    setup_default_uart();
     LCD_1IN28_Init(HORIZONTAL);
     LCD_1IN28_InitDMA();
 #ifdef ACCEL_INTERVAL
@@ -396,9 +440,18 @@ int main(void) {
     accel_init[2] = accel_meas[2];
 #endif
 
-    // Re init uart now that clk_peri has changed
-    setup_default_uart();
-//    gpio_debug_pins_init();
+#if CALCULATE_CIRCLE_ONLY
+    // Precompute the bounds of the display area
+    fixed ymax = DISPLAY_HEIGHT/2;
+    for (uint y = 0; y < ymax; ++y)
+    {
+        // the sqrtF2F function accepts and returns Q16.16 format
+        fixed col = ymax - (sqrtF2F((ymax*ymax - y*y) << 16) >> 16);
+        if (col) col--; // correct the rounding
+        start_col[ymax+y] = col;
+        start_col[ymax-y-1] = col;
+    }
+#endif
 
     return vga_main();
 }
