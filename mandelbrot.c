@@ -65,6 +65,11 @@ CU_REGISTER_DEBUG_PINS(generation)
 // Print frame calculation times to UART
 #define DEBUG_FRAMERATE 1
 
+
+#define INITIAL_ZOOM    0.75f
+#define ZOOM_FACTOR     10000
+
+
 #if USE_FLOAT
 // Floating point mode for best resolution but slowest calculation speed
 // 32-bit "float" offers very limited advantage over 32-bit fixed-point, so use 64-bit "double" instead
@@ -255,7 +260,7 @@ void output_frame_to_display()
 #endif
 #if DEBUG_FRAMERATE
     uint32_t time_now = time_us_32();
-    printf("dt = %u\n", (time_now - last_frame)/1000);
+    if (last_frame) printf("dt = %u\n", (time_now - last_frame)/1000);
     last_frame = time_now;
 #endif
 }
@@ -321,7 +326,7 @@ int vga_main(void) {
 
     // wait for UART to connect
     sleep_ms(100);
-    puts("=== Starting picobrot ===");
+    puts("\n\n=== Starting picobrot ===");
 
     // Both cores run the rendering loop, generating alternating lines
     multicore_launch_core1(core1_func);
@@ -349,7 +354,7 @@ void __time_critical_func(frame_update_logic)() {
         // Slowly zoom in the visualisation on adjacent frames
         static int foo = 0;
         float scale = DISPLAY_HEIGHT / 2;
-        scale *= (7500 + (foo++) * (float) foo) / 10000.0f;
+        scale *= INITIAL_ZOOM + ((foo++) * (float)foo) / ZOOM_FACTOR;
         if (use_accel)
         {
             // Allow the acceleration to move the visualization window
@@ -442,11 +447,11 @@ int main(void) {
 
 #if CALCULATE_CIRCLE_ONLY
     // Precompute the bounds of the display area
-    fixed ymax = DISPLAY_HEIGHT/2;
+    uint ymax = DISPLAY_HEIGHT/2;
     for (uint y = 0; y < ymax; ++y)
     {
         // the sqrtF2F function accepts and returns Q16.16 format
-        fixed col = ymax - (sqrtF2F((ymax*ymax - y*y) << 16) >> 16);
+        uint8_t col = ymax - (sqrtF2F((ymax*ymax - y*y) << 16) >> 16);
         if (col) col--; // correct the rounding
         start_col[ymax+y] = col;
         start_col[ymax-y-1] = col;
